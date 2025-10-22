@@ -250,6 +250,8 @@ export default function Canvas({
   const [topBanner, setTopBanner] = useState<{ open: boolean; text: string }>({ open: false, text: "" });
   const [snack, setSnack] = useState<{ open: boolean; text: string; severity: 'info' | 'warning' | 'error' | 'success' }>({ open: false, text: '', severity: 'info' });
   const [instructionsOpen, setInstructionsOpen] = useState(false);
+  // Ensure client-only UI (portals) render after hydration to avoid mismatch
+  const [mounted, setMounted] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const confirmClearButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -544,13 +546,18 @@ export default function Canvas({
 
   useEffect(() => {
     if (instructionsButtonRef.current) {
-      instructionsButtonRef.current.style.width = "56px";
-      instructionsButtonRef.current.style.paddingRight = "16px";
       instructionsButtonRef.current.style.background = instructionsOpen
         ? floatingButton.hover
         : floatingButton.background;
     }
   }, [instructionsOpen, floatingButton]);
+  useEffect(() => {
+    setMounted(true);
+    console.log('[Guide] Canvas mounted, portal enabled');
+  }, []);
+  useEffect(() => {
+    console.log('[Guide] instructionsOpen ->', instructionsOpen);
+  }, [instructionsOpen]);
   useEffect(() => {
     if (!clearConfirmOpen) return;
     const handleKeydown = (event: KeyboardEvent) => {
@@ -1690,6 +1697,10 @@ export default function Canvas({
     }
 
     const target = e.target as HTMLElement;
+    // Ignore pointer interactions that originate from floating UI controls (e.g., Guide button)
+    if (target.closest('[data-floating-ui]')) {
+      return;
+    }
     const isOnNode = Boolean(target.closest('.node-card'));
 
     try {
@@ -1846,6 +1857,8 @@ export default function Canvas({
     }
     // 检查是否点击了节点
     const target = e.target as HTMLElement;
+    // Let floating UI handle its own clicks
+    if (target.closest('[data-floating-ui]')) return;
     if (target.closest('.node-card')) {
       return; // 点击在节点上，忽略
     }
@@ -1869,6 +1882,7 @@ export default function Canvas({
     
     // 检查是否右键点击了节点
     const target = e.target as HTMLElement;
+    if (target.closest('[data-floating-ui]')) return;
     if (target.closest('.node-card')) {
       return; // 右键点击在节点上，忽略
     }
@@ -4459,36 +4473,48 @@ Respond with valid JSON only.`;
       </Snackbar>
 
       <div className="fixed bottom-6 left-6 z-[100] pointer-events-none flex flex-col items-start gap-3">
-        <AnimatePresence>
-          {instructionsOpen && (
-            <motion.div
-              key="canvas-instructions"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="pointer-events-auto text-sm bg-white/80 backdrop-blur rounded-2xl px-4 py-2 shadow border border-white/60 max-w-xl text-left select-none"
-              style={{ color: theme.ui.sidebar.textSecondary, caretColor: "transparent" }}
-              onAnimationComplete={() => console.log('Instructions animation complete')}
-            >
-              <div className="space-y-1">
-                <div><strong>Create:</strong> Hold canvas 0.5s to seed an idea • Right-click canvas → Generate New Node</div>
-                <div><strong>Expand:</strong> Long-press a node or right-click → Expand with AI</div>
-                <div><strong>Connect:</strong> Right-click node → Connect to Node, then click target</div>
-                <div><strong>Delete:</strong> Right-click node → Delete Node • Select multiple nodes → Delete All</div>
-                <div><strong>Navigate:</strong> Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select</div>
-                <div><strong>History:</strong> Ctrl+Z to undo • Ctrl+Y to redo (works for create, delete, move, connect, expand)</div>
-                <div><strong>More:</strong> Right-click for tools • Double-click node to edit</div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/*
+          The instructions popover used to render inline. In some browsers/layouts a transformed
+          ancestor or overflow clipping could prevent it from appearing. Render it in a portal
+          on the document body with a higher z-index to ensure it is always visible.
+        */}
+        {mounted && typeof document !== "undefined" && createPortal(
+          <div
+            className="fixed bottom-6 left-6 z-[9999] text-sm bg-white/90 backdrop-blur rounded-2xl px-4 py-2 shadow border border-slate-200/70 max-w-xl text-left select-none"
+            style={{
+              color: theme.ui.sidebar.textSecondary,
+              caretColor: "transparent",
+              opacity: instructionsOpen ? 1 : 0,
+              visibility: instructionsOpen ? "visible" : "hidden",
+              pointerEvents: instructionsOpen ? "auto" : "none",
+              transition: "opacity 0.2s ease-out, visibility 0.2s ease-out",
+            }}
+            aria-hidden={!instructionsOpen}
+            data-guide-portal
+          >
+            <div className="space-y-1">
+              <div><strong>Create:</strong> Hold canvas 0.5s to seed an idea • Right-click canvas → Generate New Node</div>
+              <div><strong>Expand:</strong> Long-press a node or right-click → Expand with AI</div>
+              <div><strong>Connect:</strong> Right-click node → Connect to Node, then click target</div>
+              <div><strong>Delete:</strong> Right-click node → Delete Node • Select multiple nodes → Delete All</div>
+              <div><strong>Navigate:</strong> Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select</div>
+              <div><strong>History:</strong> Ctrl+Z to undo • Ctrl+Y to redo (works for create, delete, move, connect, expand)</div>
+              <div><strong>More:</strong> Right-click for tools • Double-click node to edit</div>
+            </div>
+          </div>,
+          document.body
+        )}
         <button
           ref={instructionsButtonRef}
           type="button"
+          data-floating-ui
           onClick={() => {
-            console.log('Guide button clicked, current state:', instructionsOpen);
-            setInstructionsOpen((open) => !open);
+            console.log('[Guide] Button click, current:', instructionsOpen);
+            setInstructionsOpen((open) => {
+              const next = !open;
+              console.log('[Guide] Toggling ->', next);
+              return next;
+            });
           }}
           className="pointer-events-auto rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 group overflow-hidden"
           style={{
